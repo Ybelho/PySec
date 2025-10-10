@@ -1,0 +1,9 @@
+./setup_and_run.sh install       # installe dépendances + prépare Cowrie (venv + pip)
+./setup_and_run.sh start         # démarre Cowrie + docker compose (nids/attacker)
+./setup_and_run.sh stop          # arrête Cowrie + docker compose
+./setup_and_run.sh status        # statut rapide
+./setup_and_run.sh logs          # affiche logs Cowrie
+./setup_and_run.sh redirect22    # (optionnel) iptables: 22 -> 2222 (nécessite sudo)
+./setup_and_run.sh enable-telnet # (optionnel) active telnet dans cowrie.cfg
+./setup_and_run.sh update        # git pull + pip upgrade (dans cowrie)
+

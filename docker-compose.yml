@@ -1,0 +1,33 @@
+#version: "3.8"
+services:
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: cowrie
+    restart: unless-stopped
+    ports:
+      - "2222:2222"  # Cowrie écoute sur un port SSH factice
+      - "8023:8023"  # Telnet (si activé)
+    volumes:
+      - ./cowrie-data:/cowrie/data
+    environment:
+      - TZ=Europe/Paris
+
+  nids:
+    build: ./nids
+    container_name: nids
+    network_mode: "host"   # facilite le sniffing. Si interdit, utiliser macvlan ou port-mirroring.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    volumes:
+      - ./nids/logs:/app/logs
+
+  attacker:
+    build: ./attacker
+    container_name: attacker
+    depends_on:
+      - cowrie
+    network_mode: "bridge"
+    volumes:
+      - ./attacker/logs:/app/logs
+
