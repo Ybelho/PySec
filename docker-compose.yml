@@ -1,33 +1,60 @@
-#version: "3.8"
 services:
+  # Honeypot Cowrie
   cowrie:
     image: cowrie/cowrie:latest
     container_name: cowrie
-    restart: unless-stopped
     ports:
-      - "2222:2222"  # Cowrie écoute sur un port SSH factice
-      - "8023:8023"  # Telnet (si activé)
+      - "2222:2222"  # SSH
+      - "2223:2223"  # Telnet (optionnel)
     volumes:
-      - ./cowrie-data:/cowrie/data
-    environment:
-      - TZ=Europe/Paris
+      # Volume pour les logs - ATTENTION au chemin exact dans Cowrie
+      - cowrie_logs:/cowrie/var/log/cowrie
+    networks:
+      - pysec_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "test", "-f", "/cowrie/var/log/cowrie/cowrie.json"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
+  # NIDS (Network Intrusion Detection System)
   nids:
-    build: ./nids
+    build:
+      context: ./nids
+      dockerfile: Dockerfile
     container_name: nids
-    network_mode: "host"   # facilite le sniffing. Si interdit, utiliser macvlan ou port-mirroring.
-    cap_add:
-      - NET_RAW
-      - NET_ADMIN
     volumes:
+      - cowrie_logs:/cowrie_logs:ro  # Lecture seule des logs Cowrie
       - ./nids/logs:/app/logs
-
-  attacker:
-    build: ./attacker
-    container_name: attacker
+    networks:
+      - pysec_network
     depends_on:
-      - cowrie
-    network_mode: "bridge"
+      cowrie:
+        condition: service_healthy
+    restart: unless-stopped
+    command: python -u nids.py
+
+  # Attacker (script de pentest)
+  attacker:
+    build:
+      context: ./attacker
+      dockerfile: Dockerfile
+    container_name: attacker
     volumes:
       - ./attacker/logs:/app/logs
+    networks:
+      - pysec_network
+    depends_on:
+      - cowrie
+      - nids
+    # Ne démarre pas automatiquement
+    profiles:
+      - manual
 
+networks:
+  pysec_network:
+    driver: bridge
+
+volumes:
+  cowrie_logs:
