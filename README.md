@@ -31,6 +31,7 @@ Attacker (Docker)
 
 ## 3. Structure du dépôt
 
+```text
 PySec/
 ├── attacker/               # Attaques automatisées (nmap, brute-force, payload)
 ├── cowrie/                 # Honeypot SSH Cowrie
@@ -44,7 +45,7 @@ PySec/
 ├── test_nids.sh            # Tests rapides NIDS
 ├── .env / .env.example     # Variables d’environnement
 └── README.md
-
+```
 ---
 
 ## 4. Prérequis
@@ -80,9 +81,13 @@ chmod +x setup_venvs.sh
 
 ### Étape 1 – Démarrage Cowrie + Docker
 
+`git clone https://github.com/cowrie/cowrie.git`
+
 Script principal :
 
-./setup_and_run.sh start
+`./setup_and_run.sh install`
+
+`./setup_and_run.sh start`
 
 Fonctions :
 - Active le venv Cowrie
