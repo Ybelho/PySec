@@ -87,47 +87,104 @@ def normalize_cowrie_event(event: dict) -> dict:
 
 def handle_cowrie_event(event: dict) -> None:
     """
-    Callback appelé pour chaque event Cowrie (JSON).
-    Déclenche signature + anomalies log.
+    Traite un event Cowrie :
+    - Anti-doublon
+    - Détection signatures (commandes)
+    - Détection anomalies (bruteforce)
+    - Corrélation campagne (campaign_id)
+    - Enrichissement MITRE
+    - Ordonnancement Kill Chain
     """
+
     try:
+        # ============================
+        # 0) Anti-doublon Cowrie
+        # ============================
         event_id = normalize_cowrie_event(event)
 
         with processed_lock:
             if event_id in processed_events:
                 return
             processed_events.add(event_id)
-            # éviter une fuite mémoire infinie sur long run
             if len(processed_events) > 200000:
                 processed_events.clear()
 
         src_ip = event.get("src_ip", "unknown")
+        session = event.get("session")
 
-        # 1) Signatures (commandes)
+        # ============================
+        # 1) SIGNATURES (commandes)
+        # ============================
         sig = detect_command_signatures(event)
         if sig:
             alert = {
+                "timestamp": event.get("timestamp"),
+                "type": sig.get("type"),
+                "severity": sig.get("severity", "MEDIUM"),
                 "src_ip": src_ip,
-                "session": event.get("session"),
-                **sig,
+                "session": session,
+                "command": sig.get("command"),
+                "description": sig.get("description"),
                 "raw_event": event,
             }
 
+            # ---- Campaign correlation (injectée par l'attaquant) ----
+            cmd = event.get("input", "")
+            if "CAMPAIGN:" in cmd:
+                try:
+                    alert["campaign_id"] = cmd.split("CAMPAIGN:")[1].split()[0]
+                except Exception:
+                    alert["campaign_id"] = "unknown"
+            else:
+                alert["campaign_id"] = "unknown"
+
+            # ---- MITRE enrichment (override ou mapping par défaut) ----
+            alert.update(sig)  # pour récupérer mitre_override si présent
             alert = enrich_with_mitre(alert)
+
+            # ---- Kill Chain ordering ----
+            STAGE_ORDER = {
+                "Reconnaissance": 1,
+                "Credential Access": 2,
+                "Discovery": 3,
+                "Collection": 4,
+                "Command and Control": 5,
+                "Defense Evasion": 6,
+            }
+            alert["stage_order"] = STAGE_ORDER.get(
+                alert.get("mitre", {}).get("tactic"),
+                99
+            )
+
             write_alert(alert)
-        # 2) Anomalies log (bruteforce via cowrie.login.failed)
+
+        # ============================
+        # 2) ANOMALIES LOG (bruteforce)
+        # ============================
         bf = detect_bruteforce(event)
         if bf:
-            # detect_bruteforce renvoie déjà src_ip, attempts, etc.
             alert = {
-                **bf,
+                "timestamp": event.get("timestamp"),
+                "type": bf.get("type"),
+                "severity": bf.get("severity", "HIGH"),
+                "src_ip": bf.get("src_ip", src_ip),
+                "attempts": bf.get("attempts"),
+                "session": session,
+                "description": bf.get("description"),
                 "raw_event": event,
+                "campaign_id": "unknown",  # brute-force souvent avant campagne
             }
 
             alert = enrich_with_mitre(alert)
+
+            # Brute force = étape Credential Access
+            alert["stage_order"] = 2
+
             write_alert(alert)
+
     except Exception as e:
         logging.error(f"Erreur handle_cowrie_event: {e}")
+
 
 
 def handle_network_alert(net_alert: dict | None) -> None:
