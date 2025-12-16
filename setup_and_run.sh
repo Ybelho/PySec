@@ -5,7 +5,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COWRIE_DIR="${PROJECT_ROOT}/cowrie"
 VENV_DIR="${COWRIE_DIR}/cowrie-env"
-COWRIE_BIN="${COWRIE_DIR}/bin/cowrie"
+COWRIE_BIN="${VENV_DIR}/bin/cowrie"
 COWRIE_CFG_DIR="${COWRIE_DIR}/etc"
 COWRIE_CFG="${COWRIE_CFG_DIR}/cowrie.cfg"
 DOCKER_COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
