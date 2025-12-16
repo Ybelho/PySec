@@ -1,270 +1,220 @@
 #!/usr/bin/env python3
 """
 NIDS (Network Intrusion Detection System)
-Détecte les attaques à partir des logs Cowrie et du trafic réseau
+
+Version "propre + complète" :
+- Capte et analyse :
+  1) les logs Cowrie en temps réel (détection signatures + anomalies log)
+  2) le trafic réseau en temps réel via Scapy (détection anomalies réseau)
+- Écrit les alertes en JSONL
+- Génère un rapport + chiffrement (Fernet/AES-like) périodiquement (optionnel)
+
+Dépend des fichiers ajoutés :
+- sensors/cowrie_log.py
+- sensors/network.py
+- detectors/signatures.py
+- detectors/anomalies_log.py
+- detectors/anomalies_net.py
+- reporter/report.py
 """
+
+import os
 import json
 import time
 import logging
-import os
-from pathlib import Path
+import threading
 from datetime import datetime
-from collections import defaultdict, Counter
 
-# Configuration
-COWRIE_LOG = "/cowrie_logs/cowrie.json"
-ALERTS_FILE = "/app/logs/alerts.jsonl"
-CHECK_INTERVAL = 2  # secondes
+# --- Paths / Config ---
+COWRIE_LOG = os.getenv("COWRIE_LOG", "/cowrie_logs/cowrie.json")
+ALERTS_FILE = os.getenv("ALERTS_FILE", "/app/logs/alerts.jsonl")
 
-# Configurer logging
+# Rapports (optionnel)
+ENABLE_REPORT = os.getenv("ENABLE_REPORT", "1") == "1"
+REPORT_EVERY_SECONDS = int(os.getenv("REPORT_EVERY_SECONDS", "120"))  # 2 minutes par défaut
+
+# Logging
 os.makedirs("/app/logs", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler('/app/logs/nids.log'),
-        logging.StreamHandler()
-    ]
+        logging.FileHandler("/app/logs/nids.log"),
+        logging.StreamHandler(),
+    ],
 )
 
-# Compteurs pour détection d'anomalies
-ip_activity = defaultdict(lambda: {
-    'login_attempts': 0,
-    'failed_logins': 0,
-    'commands': 0,
-    'last_seen': None
-})
+# --- Imports modules ajoutés ---
+from sensors.cowrie_log import tail_cowrie_log
+from sensors.network import start_sniff
+from detectors.signatures import detect_command_signatures
+from detectors.anomalies_log import detect_bruteforce
+from detectors.anomalies_net import detect_port_scan
+from reporter.report import generate_report
+from mitre.mapping import enrich_with_mitre
 
-# État pour éviter les doublons
+
+# --- Anti-doublons (Cowrie) ---
 processed_events = set()
+processed_lock = threading.Lock()
 
 
-class SignatureDetector:
-    """Détection basée sur signatures"""
-    
-    @staticmethod
-    def detect_payload_download(event):
-        """Détecte les tentatives de téléchargement de payload"""
-        if event.get('eventid') != 'cowrie.command.input':
-            return None
-        
-        cmd = event.get('input', '').lower()
-        dangerous_patterns = [
-            'wget', 'curl', 'fetch', 'powershell',
-            'invoke-webrequest', 'certutil', 'bitsadmin'
-        ]
-        
-        for pattern in dangerous_patterns:
-            if pattern in cmd:
-                return {
-                    'type': 'PAYLOAD_DOWNLOAD',
-                    'severity': 'HIGH',
-                    'pattern': pattern.upper(),
-                    'command': event.get('input'),
-                    'description': f"Tentative de téléchargement détectée avec {pattern}"
-                }
-        return None
-    
-    @staticmethod
-    def detect_privilege_escalation(event):
-        """Détecte les tentatives d'élévation de privilèges"""
-        if event.get('eventid') != 'cowrie.command.input':
-            return None
-        
-        cmd = event.get('input', '').lower()
-        priv_esc_patterns = ['sudo', 'su ', 'chmod +s', 'pkexec']
-        
-        for pattern in priv_esc_patterns:
-            if pattern in cmd:
-                return {
-                    'type': 'PRIVILEGE_ESCALATION',
-                    'severity': 'HIGH',
-                    'pattern': pattern.upper(),
-                    'command': event.get('input')
-                }
-        return None
-    
-    @staticmethod
-    def detect_reconnaissance(event):
-        """Détecte les commandes de reconnaissance"""
-        if event.get('eventid') != 'cowrie.command.input':
-            return None
-        
-        cmd = event.get('input', '').lower()
-        recon_patterns = [
-            'nmap', 'netstat', 'ifconfig', 'ip addr',
-            'whoami', 'id', 'uname', 'cat /etc/passwd'
-        ]
-        
-        for pattern in recon_patterns:
-            if pattern in cmd:
-                return {
-                    'type': 'RECONNAISSANCE',
-                    'severity': 'MEDIUM',
-                    'pattern': pattern.upper(),
-                    'command': event.get('input')
-                }
-        return None
-
-
-class AnomalyDetector:
-    """Détection basée sur anomalies"""
-    
-    BRUTE_FORCE_THRESHOLD = 5  # tentatives en 60 secondes
-    COMMAND_FLOOD_THRESHOLD = 20  # commandes en 60 secondes
-    
-    @staticmethod
-    def detect_brute_force(src_ip):
-        """Détecte les attaques par force brute"""
-        ip_data = ip_activity[src_ip]
-        
-        if ip_data['failed_logins'] >= AnomalyDetector.BRUTE_FORCE_THRESHOLD:
-            return {
-                'type': 'BRUTE_FORCE',
-                'severity': 'HIGH',
-                'failed_attempts': ip_data['failed_logins'],
-                'description': f"Attaque par force brute détectée: {ip_data['failed_logins']} tentatives échouées"
-            }
-        return None
-    
-    @staticmethod
-    def detect_command_flood(src_ip):
-        """Détecte une activité suspecte (trop de commandes)"""
-        ip_data = ip_activity[src_ip]
-        
-        if ip_data['commands'] >= AnomalyDetector.COMMAND_FLOOD_THRESHOLD:
-            return {
-                'type': 'COMMAND_FLOOD',
-                'severity': 'MEDIUM',
-                'command_count': ip_data['commands'],
-                'description': f"Activité anormale: {ip_data['commands']} commandes exécutées"
-            }
-        return None
-
-
-def write_alert(alert_data):
-    """Écrit une alerte dans le fichier JSONL"""
+def write_alert(alert: dict) -> None:
+    """
+    Écrit une alerte dans ALERTS_FILE en JSONL.
+    Ajoute des champs standard si manquants.
+    """
+    alert.setdefault("timestamp", datetime.now().isoformat())
     try:
-        with open(ALERTS_FILE, 'a') as f:
-            f.write(json.dumps(alert_data) + '\n')
-        logging.info(f"ALERT: {alert_data['type']} - {alert_data.get('description', '')}")
+        with open(ALERTS_FILE, "a") as f:
+            f.write(json.dumps(alert, ensure_ascii=False) + "\n")
+        logging.info(f"ALERT: {alert.get('type')} [{alert.get('severity','?')}] {alert.get('description','')}")
     except Exception as e:
         logging.error(f"Erreur écriture alerte: {e}")
 
 
-def process_event(event):
-    """Traite un événement Cowrie et génère des alertes"""
+def normalize_cowrie_event(event: dict) -> dict:
+    """
+    Normalise un event Cowrie et construit un event_id stable pour éviter doublons.
+    """
+    ts = event.get("timestamp") or event.get("time") or ""
+    eid = event.get("eventid") or ""
+    sess = event.get("session") or ""
+    src = event.get("src_ip") or "unknown"
+    event_id = f"{ts}:{eid}:{sess}:{src}"
+    return event_id
+
+
+def handle_cowrie_event(event: dict) -> None:
+    """
+    Callback appelé pour chaque event Cowrie (JSON).
+    Déclenche signature + anomalies log.
+    """
     try:
-        # Éviter les doublons
-        event_id = f"{event.get('timestamp')}:{event.get('eventid')}:{event.get('session')}"
-        if event_id in processed_events:
-            return
-        processed_events.add(event_id)
-        
-        src_ip = event.get('src_ip', 'unknown')
-        eventid = event.get('eventid', '')
-        
-        # Mise à jour des statistiques IP
-        ip_activity[src_ip]['last_seen'] = datetime.now()
-        
-        # Détection basée sur signatures
-        detectors = [
-            SignatureDetector.detect_payload_download,
-            SignatureDetector.detect_privilege_escalation,
-            SignatureDetector.detect_reconnaissance
-        ]
-        
-        for detector in detectors:
-            result = detector(event)
-            if result:
-                alert = {
-                    'timestamp': datetime.now().isoformat(),
-                    'src_ip': src_ip,
-                    'session': event.get('session'),
-                    **result,
-                    'raw_event': event
-                }
-                write_alert(alert)
-        
-        # Mise à jour compteurs pour anomalies
-        if eventid == 'cowrie.login.failed':
-            ip_activity[src_ip]['failed_logins'] += 1
-            
-            # Vérifier brute force
-            result = AnomalyDetector.detect_brute_force(src_ip)
-            if result:
-                alert = {
-                    'timestamp': datetime.now().isoformat(),
-                    'src_ip': src_ip,
-                    **result
-                }
-                write_alert(alert)
-        
-        elif eventid == 'cowrie.login.success':
-            ip_activity[src_ip]['login_attempts'] += 1
-            logging.info(f"Login réussi depuis {src_ip}")
-        
-        elif eventid == 'cowrie.command.input':
-            ip_activity[src_ip]['commands'] += 1
-            
-            # Vérifier command flood
-            result = AnomalyDetector.detect_command_flood(src_ip)
-            if result:
-                alert = {
-                    'timestamp': datetime.now().isoformat(),
-                    'src_ip': src_ip,
-                    **result
-                }
-                write_alert(alert)
-    
+        event_id = normalize_cowrie_event(event)
+
+        with processed_lock:
+            if event_id in processed_events:
+                return
+            processed_events.add(event_id)
+            # éviter une fuite mémoire infinie sur long run
+            if len(processed_events) > 200000:
+                processed_events.clear()
+
+        src_ip = event.get("src_ip", "unknown")
+
+        # 1) Signatures (commandes)
+        sig = detect_command_signatures(event)
+        if sig:
+            alert = {
+                "src_ip": src_ip,
+                "session": event.get("session"),
+                **sig,
+                "raw_event": event,
+            }
+
+            alert = enrich_with_mitre(alert)
+            write_alert(alert)
+        # 2) Anomalies log (bruteforce via cowrie.login.failed)
+        bf = detect_bruteforce(event)
+        if bf:
+            # detect_bruteforce renvoie déjà src_ip, attempts, etc.
+            alert = {
+                **bf,
+                "raw_event": event,
+            }
+
+            alert = enrich_with_mitre(alert)
+            write_alert(alert)
     except Exception as e:
-        logging.error(f"Erreur traitement événement: {e}")
+        logging.error(f"Erreur handle_cowrie_event: {e}")
 
 
-def tail_cowrie_logs():
-    """Suit les logs Cowrie en temps réel"""
-    logging.info(f"Surveillance des logs: {COWRIE_LOG}")
-    
-    # Attendre que le fichier existe
-    while not Path(COWRIE_LOG).exists():
-        logging.warning(f"En attente du fichier {COWRIE_LOG}...")
-        time.sleep(5)
-    
-    # Position de lecture
-    with open(COWRIE_LOG, 'r') as f:
-        # Aller à la fin du fichier
-        f.seek(0, 2)
-        
-        while True:
-            line = f.readline()
-            if line:
-                try:
-                    event = json.loads(line.strip())
-                    process_event(event)
-                except json.JSONDecodeError:
-                    continue
+def handle_network_alert(net_alert: dict | None) -> None:
+    """
+    Callback réseau : net_alert est soit None soit un dict.
+    On le passe dans le détecteur anomalies réseau.
+    """
+    try:
+        if not net_alert:
+            return
+        alert = detect_port_scan(net_alert)
+        if alert:
+            alert = enrich_with_mitre(alert)
+            write_alert(alert)
+    except Exception as e:
+        logging.error(f"Erreur handle_network_alert: {e}")
+
+
+def thread_cowrie() -> None:
+    logging.info(f"[Cowrie] Tail logs: {COWRIE_LOG}")
+    tail_cowrie_log(COWRIE_LOG, callback=handle_cowrie_event, interval=2)
+
+
+def thread_network() -> None:
+    logging.info("[Network] Sniff Scapy (TCP/IP) en temps réel")
+    # start_sniff appelle callback(process_packet(...))
+    # où process_packet retourne None ou un dict event
+    start_sniff(callback=handle_network_alert)
+
+
+def thread_reporter() -> None:
+    """
+    Génère régulièrement un rapport (report.txt) + chiffré (report.enc) + clé (report.key).
+    Utile pour démontrer l'exigence "rapport chiffré".
+    """
+    if not ENABLE_REPORT:
+        logging.info("[Reporter] Désactivé (ENABLE_REPORT=0)")
+        return
+
+    logging.info(f"[Reporter] Génération rapport toutes les {REPORT_EVERY_SECONDS}s")
+    while True:
+        try:
+            out = generate_report()
+            if out:
+                report_file, enc_file = out
+                logging.info(f"[Reporter] Rapport généré: {report_file} | chiffré: {enc_file}")
             else:
-                time.sleep(CHECK_INTERVAL)
-
-
-def periodic_cleanup():
-    """Nettoie les anciennes données (optionnel)"""
-    # Réinitialiser les compteurs toutes les 5 minutes
-    # pour éviter les faux positifs
-    pass
+                logging.info("[Reporter] Pas d'alertes -> pas de rapport")
+        except Exception as e:
+            logging.error(f"[Reporter] Erreur génération rapport: {e}")
+        time.sleep(REPORT_EVERY_SECONDS)
 
 
 def main():
-    logging.info("=== Démarrage du NIDS ===")
-    logging.info(f"Fichier de logs Cowrie: {COWRIE_LOG}")
-    logging.info(f"Fichier d'alertes: {ALERTS_FILE}")
-    
+    logging.info("=== Démarrage du NIDS (complet) ===")
+    logging.info(f"COWRIE_LOG={COWRIE_LOG}")
+    logging.info(f"ALERTS_FILE={ALERTS_FILE}")
+    logging.info(f"ENABLE_REPORT={int(ENABLE_REPORT)} REPORT_EVERY_SECONDS={REPORT_EVERY_SECONDS}")
+
+    # S'assure que le fichier alertes existe
     try:
-        tail_cowrie_logs()
-    except KeyboardInterrupt:
-        logging.info("Arrêt du NIDS")
+        os.makedirs(os.path.dirname(ALERTS_FILE), exist_ok=True)
+        if not os.path.exists(ALERTS_FILE):
+            open(ALERTS_FILE, "a").close()
     except Exception as e:
-        logging.error(f"Erreur fatale: {e}")
+        logging.error(f"Impossible d'initialiser {ALERTS_FILE}: {e}")
+
+    threads = []
+
+    t1 = threading.Thread(target=thread_cowrie, name="cowrie-tail", daemon=True)
+    t2 = threading.Thread(target=thread_network, name="net-sniff", daemon=True)
+    threads.extend([t1, t2])
+
+    t3 = threading.Thread(target=thread_reporter, name="reporter", daemon=True)
+    threads.append(t3)
+
+    for t in threads:
+        t.start()
+
+    # Boucle principale : garde le process vivant
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logging.info("Arrêt demandé (CTRL+C).")
+    except Exception as e:
+        logging.error(f"Erreur fatale main: {e}")
         raise
 
 

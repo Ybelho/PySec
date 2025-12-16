@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>📊 NIDS – Live Statistics</h1>
+
+<div class="cards">
+  <div class="card">Total Alerts<br><b id="total">0</b></div>
+  <div class="card">HIGH<br><b id="high">0</b></div>
+  <div class="card">MEDIUM<br><b id="medium">0</b></div>
+  <div class="card">LOW<br><b id="low">0</b></div>
+</div>
+
+<h2>🔥 Risk Score by IP</h2>
+
+<table class="table">
+  <thead>
+    <tr>
+      <th>IP</th>
+      <th>Risk</th>
+      <th>Alerts</th>
+      <th>Techniques</th>
+      <th>Tactics</th>
+    </tr>
+  </thead>
+  <tbody id="riskTable"></tbody>
+</table>
+
+<script>
+async function refresh() {
+  const stats = await fetch("/api/stats").then(r => r.json());
+
+  document.getElementById("total").innerText = stats.total;
+  document.getElementById("high").innerText = stats.severity.HIGH || 0;
+  document.getElementById("medium").innerText = stats.severity.MEDIUM || 0;
+  document.getElementById("low").innerText = stats.severity.LOW || 0;
+
+  const risk = await fetch("/api/risk").then(r => r.json());
+  const body = document.getElementById("riskTable");
+  body.innerHTML = "";
+
+  Object.entries(risk)
+    .sort((a,b)=>b[1].score-a[1].score)
+    .forEach(([ip,d])=>{
+      body.innerHTML += `
+        <tr>
+          <td>${ip}</td>
+          <td><b>${d.score}</b></td>
+          <td>${d.alerts}</td>
+          <td>${d.techniques.join(", ")}</td>
+          <td>${d.tactics.join(", ")}</td>
+        </tr>`;
+    });
+}
+
+setInterval(refresh, 3000);
+refresh();
+</script>
+
+{% endblock %}

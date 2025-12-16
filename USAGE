@@ -1,9 +1,117 @@
-./setup_and_run.sh install       # installe dépendances + prépare Cowrie (venv + pip)
-./setup_and_run.sh start         # démarre Cowrie + docker compose (nids/attacker)
-./setup_and_run.sh stop          # arrête Cowrie + docker compose
-./setup_and_run.sh status        # statut rapide
-./setup_and_run.sh logs          # affiche logs Cowrie
-./setup_and_run.sh redirect22    # (optionnel) iptables: 22 -> 2222 (nécessite sudo)
-./setup_and_run.sh enable-telnet # (optionnel) active telnet dans cowrie.cfg
-./setup_and_run.sh update        # git pull + pip upgrade (dans cowrie)
+PySec – Usage rapide
 
+Ce projet déploie un honeypot Cowrie, un NIDS, un attacker simulé et un dashboard SOC via Docker et Python.
+
+Deux scripts principaux sont fournis :
+- setup_venvs.sh : préparation des environnements Python locaux (non versionnés)
+- setup_and_run.sh : installation, démarrage et gestion complète de la stack
+
+--------------------------------------------------
+1) Préparation des environnements Python (obligatoire)
+--------------------------------------------------
+
+Avant toute chose, il est recommandé de générer tous les virtualenv Python nécessaires.
+Ces environnements ne sont PAS versionnés (gitignore).
+
+Commande :
+
+./setup_venvs.sh
+
+Ce script :
+- Crée un virtualenv pour Cowrie
+- Crée un virtualenv pour les outils Python locaux (analyse, scripts)
+- Installe les dépendances Python requises
+- Ne touche pas aux fichiers .env ou .env.example
+
+À exécuter une seule fois ou après un nettoyage complet.
+
+--------------------------------------------------
+2) Installation initiale (une seule fois)
+--------------------------------------------------
+
+./setup_and_run.sh install
+
+Cette commande :
+- Installe les dépendances système (Debian/Ubuntu si disponible)
+- Initialise Cowrie dans son virtualenv
+- Installe Cowrie en mode editable
+- Génère un cowrie.cfg minimal si absent
+
+--------------------------------------------------
+3) Démarrer l’environnement complet
+--------------------------------------------------
+
+./setup_and_run.sh start
+
+Actions réalisées :
+- Démarrage du honeypot Cowrie (SSH sur le port 2222)
+- Lancement de docker compose (NIDS, Dashboard, Attacker)
+- Build automatique des images Docker si nécessaire
+
+Accès principaux :
+- Dashboard SOC : http://localhost:5000
+- Honeypot SSH : ssh -p 2222 root@localhost
+
+--------------------------------------------------
+4) Arrêter l’environnement
+--------------------------------------------------
+
+./setup_and_run.sh stop
+
+- Arrêt de Cowrie
+- docker compose down
+
+--------------------------------------------------
+5) Redémarrage rapide
+--------------------------------------------------
+
+./setup_and_run.sh restart
+
+Equivalent à un stop suivi d’un start.
+
+--------------------------------------------------
+6) Vérifier l’état du système
+--------------------------------------------------
+
+./setup_and_run.sh status
+
+Affiche :
+- État du process Cowrie
+- Liste et statut des containers Docker
+
+--------------------------------------------------
+7) Consulter les logs
+--------------------------------------------------
+
+./setup_and_run.sh logs
+
+- Affiche les logs Cowrie
+- Bascule automatiquement sur les logs JSON si nécessaire
+
+--------------------------------------------------
+8) Options avancées (laboratoire uniquement)
+--------------------------------------------------
+
+Redirection SSH 22 vers 2222 (iptables, sudo requis) :
+
+./setup_and_run.sh redirect22
+
+Activation du honeypot Telnet :
+
+./setup_and_run.sh enable-telnet
+
+Mise à jour Cowrie :
+
+./setup_and_run.sh update
+
+--------------------------------------------------
+Notes importantes
+--------------------------------------------------
+
+- Projet strictement réservé à un environnement de test
+- Aucun virtualenv ni fichier .env n’est versionné
+- Les volumes Docker assurent la persistance des logs
+- Le dashboard fonctionne en polling temps réel
+
+--------------------------------------------------
+Fin

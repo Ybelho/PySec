@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Overview</h1>
+  <p class="muted">SOC-like dashboard for your Honeypot/NIDS project.</p>
+</div>
+
+<div class="kpis">
+  <div class="kpi">
+    <div class="kpi-label">Total Alerts</div>
+    <div class="kpi-value" id="kpiTotal">0</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">High Severity</div>
+    <div class="kpi-value" id="kpiHigh">0</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Top MITRE</div>
+    <div class="kpi-value" id="kpiTopMitre">—</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-title">Timeline</div>
+    <canvas id="miniTimeline"></canvas>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Quick Links</div>
+    <div class="quick-links">
+      <a class="btn" href="/alerts">🚨 Alerts</a>
+      <a class="btn" href="/stats">📊 Stats</a>
+      <a class="btn" href="/mitre">🧩 Heatmap</a>
+      <a class="btn ghost" href="/export/pdf">⬇ Export PDF</a>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/index_live.js') }}"></script>
+{% endblock %}
+

@@ -1,56 +1,55 @@
 services:
-  # Honeypot Cowrie
   cowrie:
     image: cowrie/cowrie:latest
     container_name: cowrie
     ports:
-      - "2222:2222"  # SSH
-      - "2223:2223"  # Telnet (optionnel)
+      - "2222:2222"
+      - "2223:2223"
     volumes:
-      # Volume pour les logs - ATTENTION au chemin exact dans Cowrie
-      - cowrie_logs:/cowrie/var/log/cowrie
+      # CORRECTION: Le bon chemin pour les logs Cowrie
+      - cowrie_logs:/cowrie/cowrie-git/var/log/cowrie
     networks:
       - pysec_network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "test", "-f", "/cowrie/var/log/cowrie/cowrie.json"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
 
-  # NIDS (Network Intrusion Detection System)
   nids:
-    build:
-      context: ./nids
-      dockerfile: Dockerfile
+    build: ./nids
     container_name: nids
+    command: python -u nids.py
     volumes:
-      - cowrie_logs:/cowrie_logs:ro  # Lecture seule des logs Cowrie
+      - cowrie_logs:/cowrie_logs:ro
       - ./nids/logs:/app/logs
     networks:
       - pysec_network
-    depends_on:
-      cowrie:
-        condition: service_healthy
+    privileged: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     restart: unless-stopped
-    command: python -u nids.py
+    depends_on:
+      - cowrie
 
-  # Attacker (script de pentest)
   attacker:
-    build:
-      context: ./attacker
-      dockerfile: Dockerfile
+    build: ./attacker
     container_name: attacker
-    volumes:
-      - ./attacker/logs:/app/logs
     networks:
       - pysec_network
     depends_on:
       - cowrie
       - nids
-    # Ne démarre pas automatiquement
-    profiles:
-      - manual
+
+  dashboard:
+    build: ./dashboard
+    container_name: pysec-dashboard
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./nids/logs:/app/logs:ro
+    networks:
+      - pysec_network
+    depends_on:
+      - nids
+    restart: unless-stopped
 
 networks:
   pysec_network:
@@ -58,3 +57,6 @@ networks:
 
 volumes:
   cowrie_logs:
+# Suppression de la définition du volume nommé 'cowrie_logs' car nous utilisons un bind mount.
+# volumes:
+#   cowrie_logs:

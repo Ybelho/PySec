@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>🧬 MITRE ATT&CK – Kill Chain Timeline</h1>
+
+<div id="timeline"></div>
+
+<script>
+fetch("/api/killchain").then(r=>r.json()).then(data=>{
+  const root = document.getElementById("timeline");
+  root.innerHTML = "";
+
+  Object.entries(data).forEach(([ip,events])=>{
+    root.innerHTML += `<h2>🧑‍💻 ${ip}</h2>`;
+    events.forEach(e=>{
+      root.innerHTML += `
+        <div class="kc-event">
+          <span class="badge">${e.tactic}</span>
+          <b>${e.id}</b> – ${e.technique}
+          <small>${e.severity}</small>
+        </div>`;
+    });
+  });
+});
+</script>
+
+{% endblock %}
+

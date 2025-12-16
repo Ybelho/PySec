@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PySec – SOC Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+</head>
+<body>
+
+<!-- ===== TOP BAR ===== -->
+<header class="topbar">
+    <div class="brand">
+        <div class="logo">🛡️</div>
+        <div>
+            <div class="brand-title">PySec</div>
+            <div class="brand-sub">SOC · Honeypot · NIDS</div>
+        </div>
+    </div>
+
+    <div class="topbar-actions">
+        <div class="live-pill">
+            <span class="dot"></span>
+            LIVE
+        </div>
+    </div>
+</header>
+
+<!-- ===== LAYOUT ===== -->
+<div class="layout">
+
+    <!-- SIDEBAR NAV -->
+    <aside class="sidebar">
+        <a href="/" class="nav-item {{ 'active' if request.path == '/' else '' }}">🏠 Overview</a>
+        <a href="/alerts" class="nav-item {{ 'active' if request.path == '/alerts' else '' }}">🚨 Alerts</a>
+        <a href="/stats" class="nav-item {{ 'active' if request.path == '/stats' else '' }}">📊 Stats</a>
+        <a href="/mitre" class="nav-item {{ 'active' if request.path == '/mitre' else '' }}">🧬 MITRE ATT&CK</a>
+        <a href="/timeline" class="nav-item {{ 'active' if request.path == '/timeline' else '' }}">⛓ Kill Chain</a>
+    </aside>
+
+    <!-- PAGE CONTENT -->
+    <main class="content">
+        {% block content %}{% endblock %}
+    </main>
+
+</div>
+
+<!-- Toast notification -->
+<div id="toast" class="toast"></div>
+
+<!-- Global JS init (MUST be loaded before page-specific scripts) -->
+<script>
+window.PYSEC = window.PYSEC || {};
+PYSEC.lastTimestamp = "";
+PYSEC.toast = function (msg) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 2200);
+};
+</script>
+
+</body>
+</html>

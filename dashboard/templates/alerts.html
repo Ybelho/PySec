@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Alerts</h1>
+  <p class="muted">Live stream (polling) – last 30 alerts.</p>
+</div>
+
+<div class="card">
+  <div class="card-title">Latest Alerts</div>
+
+  <div class="table-wrap">
+    <table class="table" id="alertsTable">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Type</th>
+          <th>Severity</th>
+          <th>Source</th>
+          <th>Command</th>
+          <th>MITRE</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/alerts_live.js') }}"></script>
+{% endblock %}
+
